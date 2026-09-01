@@ -1,7 +1,8 @@
 #!/bin/bash
 # Codex notify hook: record the session, then pass the event on to whatever
 # notify was configured before, so nothing that already worked stops working.
-RECORD="/Users/minsujang/PycharmProjects/chat-sessions/hooks/record.py"
+# Found next to this script, so the hook works wherever the checkout lives.
+RECORD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/record.py"
 PREVIOUS_FILE="$HOME/.codex/.sessiondock-previous-notify"
 
 /usr/bin/python3 "$RECORD" turn-ended "$@" >/dev/null 2>&1 || true
