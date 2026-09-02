@@ -18,11 +18,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict>
 </plist>
 PLIST
 
 cp "$DIR/hooks/scan.py" "$DIR/hooks/record.py" "$APP/Contents/Resources/"
+cp "$DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 swiftc -O -target arm64-apple-macosx13.0 \
     -o "$APP/Contents/MacOS/SessionDock" \

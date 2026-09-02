@@ -84,6 +84,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        // What the day has cost in waiting, which is the one thing only this
+        // app can see: it watches both ends of every handover.
+        if let day = Ledger.load() {
+            let mine = NSMenuItem(
+                title: "오늘 나를 기다린 시간  \(Ledger.spell(day.waited_on_me))",
+                action: nil, keyEquivalent: "")
+            mine.isEnabled = false
+            menu.addItem(mine)
+            let theirs = NSMenuItem(
+                title: "오늘 내가 기다린 시간  \(Ledger.spell(day.waited_on_them))",
+                action: nil, keyEquivalent: "")
+            theirs.isEnabled = false
+            menu.addItem(theirs)
+            if !day.longest_chat.isEmpty {
+                let name = day.longest_chat.count > 28
+                    ? String(day.longest_chat.prefix(27)) + "…" : day.longest_chat
+                let worst = NSMenuItem(
+                    title: "가장 오래 방치  \(name) · \(Ledger.spell(day.longest_seconds))",
+                    action: nil, keyEquivalent: "")
+                worst.isEnabled = false
+                menu.addItem(worst)
+            }
+        }
+
         menu.addItem(.separator())
         add(menu, "지금 다시 찾기", #selector(rescan), "r")
         let idle = NSMenuItem(title: "유휴 세션도 보기",
@@ -91,6 +115,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         idle.target = self
         idle.state = Settings.shared.showIdle ? .on : .off
         menu.addItem(idle)
+        let folded = NSMenuItem(title: "접어두기",
+                                action: #selector(toggleFold), keyEquivalent: "")
+        folded.target = self
+        folded.state = Settings.shared.collapsed ? .on : .off
+        menu.addItem(folded)
+
         let delegated = NSMenuItem(title: "위임된 작업도 보기",
                                    action: #selector(toggleDelegated), keyEquivalent: "")
         delegated.target = self
@@ -186,6 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleIdle() {
         Settings.shared.showIdle.toggle()
         dock.reload()
+    }
+
+    @objc private func toggleFold() {
+        dock.toggleCollapsed()
     }
 
     @objc private func toggleDelegated() {

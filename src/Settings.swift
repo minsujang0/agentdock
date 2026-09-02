@@ -91,6 +91,15 @@ final class Settings {
         ("선택", "selection"),
     ]
 
+    /// Whether the column is folded away into a single tab.
+    ///
+    /// Kept, unlike the reach: this is how someone wants the dock to sit, not
+    /// something they reach for to answer one question.
+    var collapsed: Bool {
+        get { defaults.bool(forKey: "collapsed") }
+        set { defaults.set(newValue, forKey: "collapsed") }
+    }
+
     /// Runs another agent split off from a task of its own.
     ///
     /// Shown by default: they are real work, and hiding them makes a busy
@@ -124,6 +133,29 @@ final class Settings {
     }
 
     func clearResolved() { defaults.removeObject(forKey: resolvedKey) }
+
+    private let seenKey = "acknowledged"
+
+    /// Whether this turn has already been looked at.
+    ///
+    /// Kept against the session's own timestamp rather than as a flag, so
+    /// answering it and having it come back to you lights it again — what was
+    /// acknowledged was that turn, not the session for good.
+    func wasSeen(_ id: String, updated: Double) -> Bool {
+        guard let stamp = (defaults.dictionary(forKey: seenKey)
+                           as? [String: Double])?[id] else { return false }
+        return updated <= stamp + 1
+    }
+
+    func acknowledge(_ id: String, updated: Double) {
+        var map = (defaults.dictionary(forKey: seenKey) as? [String: Double]) ?? [:]
+        map[id] = updated
+        if map.count > 300 {
+            let newest = map.sorted { $0.value > $1.value }.prefix(200)
+            map = Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
+        }
+        defaults.set(map, forKey: seenKey)
+    }
 
     /// Which display the dock belongs on. NSScreen.main follows the focused
     /// window, so without pinning, the dock hops between monitors as the user

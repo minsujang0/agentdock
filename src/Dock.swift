@@ -232,6 +232,58 @@ enum Rim {
     }
 }
 
+/// The ripple that goes out from a session waiting on you.
+///
+/// A finished turn is the one state that wants something, and a still mark
+/// said so no louder than a parked one did. A ring around the badge was too
+/// small to catch, a wash over the card too faint to notice, and a steady
+/// glow just sat there. This grows out of the badge and fades, which reads as
+/// something happening rather than something being lit. Two rings, half a
+/// cycle apart, so there is always one on its way out.
+enum Halo {
+    static func make(diameter: CGFloat, colour: NSColor) -> CALayer {
+        let host = CALayer()
+        host.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        for step in [0.0, 1.1] {
+            host.addSublayer(ring(diameter: diameter, colour: colour, delay: step))
+        }
+        return host
+    }
+
+    private static func ring(diameter: CGFloat, colour: NSColor,
+                             delay: Double) -> CALayer {
+        let box = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        let ring = CAShapeLayer()
+        ring.frame = box
+        // Stroked rather than filled: it passes over the mark on its way out,
+        // and a filled disc would blank it every cycle.
+        ring.path = CGPath(ellipseIn: box.insetBy(dx: 0.75, dy: 0.75), transform: nil)
+        ring.fillColor = nil
+        ring.strokeColor = colour.cgColor
+        ring.lineWidth = 1.5
+        ring.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        ring.opacity = 0
+
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = 1.0
+        grow.toValue = 1.9
+
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0.0, 0.65, 0.0]
+        fade.keyTimes = [0, 0.15, 1]
+
+        let both = CAAnimationGroup()
+        both.animations = [grow, fade]
+        both.duration = 2.2
+        both.repeatCount = .infinity
+        both.isRemovedOnCompletion = false
+        both.timeOffset = delay
+        both.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ring.add(both, forKey: "ripple")
+        return ring
+    }
+}
+
 final class RowView: NSView {
     weak var card: RowCard?
 
@@ -242,6 +294,21 @@ final class RowView: NSView {
 
     private var spinner: CALayer?
     private var spinnerColour: NSColor?
+    private var halo: CALayer?
+
+    /// Put the breathing wash in place, or take it away.
+    func setHalo(_ on: Bool, colour: NSColor) {
+        guard on else {
+            halo?.removeFromSuperlayer()
+            halo = nil
+            return
+        }
+        guard halo == nil else { return }
+        let made = Halo.make(diameter: badgeRect.width, colour: colour)
+        made.frame = badgeRect
+        layer?.insertSublayer(made, at: 0)
+        halo = made
+    }
 
     /// Put the turning arc in place, or take it away.
     ///
@@ -299,10 +366,11 @@ final class RowView: NSView {
     /// reads as progress without needing a percentage nobody has. Waiting is
     /// an arrow pointing back at the reader, because the row is asking for
     /// something. Idle is a flat bar — present, but with nothing to say.
-    private func drawStatus(_ session: Session, in badge: NSRect) {
+    private func drawStatus(_ session: Session, in badge: NSRect,
+                            reversed: Bool = false) {
         let dimmed = session.mark == .parked
-        let colour = dimmed
-            ? NSColor.labelColor.withAlphaComponent(0.45) : session.color
+        let colour = reversed ? NSColor.white
+            : (dimmed ? NSColor.labelColor.withAlphaComponent(0.45) : session.color)
 
         switch session.mark {
         case .working:
@@ -312,7 +380,8 @@ final class RowView: NSView {
             // Solid, and pointing the way a thing you press points.
             let glyph = Marks.symbol("play.fill", size: 8,
                                      description: session.label)
-            Marks.tinted(glyph, colour, key: "play\(session.state)\(dimmed)").draw(
+            Marks.tinted(glyph, colour,
+                         key: "play\(session.state)\(dimmed)\(reversed)").draw(
                 in: NSRect(x: badge.midX - glyph.size.width / 2 + 0.5,
                            y: badge.midY - glyph.size.height / 2,
                            width: glyph.size.width, height: glyph.size.height))
@@ -351,6 +420,7 @@ final class RowView: NSView {
         // read at a glance and sideways, so the shape has to carry it — the
         // three states are told apart by silhouette before colour.
         setSpinner(session.mark == .working, colour: session.color)
+        setHalo(session.unseen, colour: session.color)
         let badge = badgeRect
         let dim = session.mark == .parked
 
@@ -362,16 +432,25 @@ final class RowView: NSView {
         // whatever happened to be behind the dock. The disc now carries its
         // own ground, so the mark reads the same over water as over a page.
         let disc = NSBezierPath(ovalIn: badge)
-        (Palette.isDark ? NSColor(calibratedWhite: 0.16, alpha: 0.92)
-                        : NSColor(calibratedWhite: 1.0, alpha: 0.92)).setFill()
-        disc.fill()
-        session.color.withAlphaComponent(dim ? 0.14 : 0.24).setFill()
-        disc.fill()
-        // A rim of the state's colour, which is what carries at a glance.
-        disc.lineWidth = 1
-        session.color.withAlphaComponent(dim ? 0.30 : 0.55).setStroke()
-        NSBezierPath(ovalIn: badge.insetBy(dx: 0.5, dy: 0.5)).stroke()
-        drawStatus(session, in: badge)
+        let unseen = session.unseen
+        if unseen {
+            // A turn nobody has looked at yet gets the badge outright: solid
+            // colour, mark reversed out of it. A pale disc with a tinted mark
+            // read no louder than any other row, whatever was pulsing around
+            // it.
+            session.color.setFill()
+            disc.fill()
+        } else {
+            (Palette.isDark ? NSColor(calibratedWhite: 0.16, alpha: 0.92)
+                            : NSColor(calibratedWhite: 1.0, alpha: 0.92)).setFill()
+            disc.fill()
+            session.color.withAlphaComponent(dim ? 0.14 : 0.24).setFill()
+            disc.fill()
+            disc.lineWidth = 1
+            session.color.withAlphaComponent(dim ? 0.30 : 0.55).setStroke()
+            NSBezierPath(ovalIn: badge.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        }
+        drawStatus(session, in: badge, reversed: unseen)
         x = badge.maxX + 7
 
         // which tool this session belongs to
@@ -483,9 +562,11 @@ class CardView: NSView {
     let glass: NSView
     private let effect: NSVisualEffectView?
     private let corner: CGFloat
+    private let clear: Bool
 
-    init(corner: CGFloat, shadow: CGFloat) {
+    init(corner: CGFloat, shadow: CGFloat, clear: Bool = false) {
         self.corner = corner
+        self.clear = clear
         if let type = NSClassFromString("NSGlassEffectView") as? NSView.Type {
             let made = type.init(frame: .zero)
             made.setValue(corner, forKey: "cornerRadius")
@@ -531,7 +612,10 @@ class CardView: NSView {
     func applyTint() {
         guard effect == nil else { return }
         glass.setValue(nil, forKey: "tintColor")
-        glass.setValue(0, forKey: "style")     // regular, as Codex asks for
+        // Regular for the cards, as Codex asks for its own. Clear for the tab:
+        // measured, clear glass lets the desktop through almost untouched, and
+        // that is the whole point of a tab meant to sit on the wallpaper.
+        glass.setValue(clear ? 1 : 0, forKey: "style")
         // Adaptation off. The property defaults to 2, which is why setting it
         // to 2 earlier changed nothing — that was the default being written
         // back. Codex turns this off outright rather than leaving it on
@@ -673,6 +757,339 @@ final class HeaderCard: CardView {
     }
 
     func drag(by delta: CGSize) { dock?.moveAnchor(by: delta) }
+    func fold() { dock?.toggleCollapsed() }
+}
+
+/// The button under the column that reaches further back.
+final class MoreCard: CardView {
+    private let view = MoreView()
+    private weak var dock: Dock?
+
+    init(dock: Dock) {
+        self.dock = dock
+        super.init(corner: Layout.headerHeight / 2, shadow: 8)
+        view.owner = self
+        view.autoresizingMask = [.width, .height]
+        content = view
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(label: String, home: Bool) {
+        guard view.label != label || view.showsHome != home else { return }
+        view.label = label
+        view.showsHome = home
+        view.needsDisplay = true
+    }
+
+    func press() { dock?.reachFurther() }
+    func goHome() { dock?.reachHome() }
+}
+
+final class MoreView: NSView {
+    weak var owner: MoreCard?
+    var label = ""
+    var showsHome = false
+    private var overHome = false
+    private var overMain = false
+
+    override var isFlipped: Bool { true }
+
+    /// The way back, kept apart from the way further so returning never means
+    /// pressing through every rung you climbed.
+    private var homeRect: NSRect {
+        showsHome ? NSRect(x: bounds.width - 36, y: 0, width: 36, height: bounds.height)
+                  : .zero
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .mouseMoved,
+                                                 .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let home = homeRect.contains(point)
+        let main = !home && bounds.contains(point)
+        if home != overHome || main != overMain {
+            overHome = home
+            overMain = main
+            needsDisplay = true
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
+
+    override func mouseExited(with event: NSEvent) {
+        overHome = false
+        overMain = false
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if homeRect.contains(convert(event.locationInWindow, from: nil)) {
+            owner?.goHome()
+        } else {
+            owner?.press()
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill(using: .copy)
+        Palette.backing.setFill()
+        bounds.fill()
+        Rim.draw(in: bounds, corner: bounds.height / 2)
+
+        let home = homeRect
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: NSColor.labelColor
+                .withAlphaComponent(overMain ? 0.85 : 0.55),
+            .kern: 0.2]
+        let size = (label as NSString).size(withAttributes: attrs)
+        let room = bounds.width - home.width
+        (label as NSString).draw(
+            at: NSPoint(x: (room - size.width) / 2,
+                        y: (bounds.height - size.height) / 2),
+            withAttributes: attrs)
+
+        guard showsHome else { return }
+        // A hairline between the two, so it reads as two controls rather than
+        // one long bar with a mark floating at its end.
+        (Palette.isDark ? NSColor.white.withAlphaComponent(0.12)
+                        : NSColor.black.withAlphaComponent(0.10)).setStroke()
+        let split = NSBezierPath()
+        split.move(to: NSPoint(x: home.minX, y: 5))
+        split.line(to: NSPoint(x: home.minX, y: bounds.height - 5))
+        split.lineWidth = 1
+        split.stroke()
+
+        let glyph = Marks.symbol("arrow.uturn.left", size: 9,
+                                 description: "처음 범위로")
+        Marks.tinted(glyph, NSColor.labelColor.withAlphaComponent(overHome ? 0.85 : 0.5),
+                     key: "home\(overHome)")
+            .draw(in: NSRect(x: home.midX - glyph.size.width / 2,
+                             y: home.midY - glyph.size.height / 2,
+                             width: glyph.size.width, height: glyph.size.height))
+    }
+}
+
+/// What is left of the dock when it is folded away.
+///
+/// A tab at the corner the column grows from, carrying the counts so the thing
+/// you fold the dock away to avoid — checking it — is still answered without
+/// unfolding it. Hovering brings the column back.
+/// Water moving inside the tab.
+///
+/// Two translucent waves scroll across the pill at different speeds, so their
+/// crests drift in and out of step and the surface never repeats exactly — the
+/// difference between a loop and something that looks like it is moving. Each
+/// path is two periods long and slides by one, which is seamless. Layers only:
+/// the render server does the moving.
+enum Sheen {
+    static func make(size: NSSize, corner: CGFloat) -> CALayer {
+        let host = CALayer()
+        host.frame = CGRect(origin: .zero, size: size)
+        host.masksToBounds = true
+        host.cornerRadius = corner
+        host.cornerCurve = .continuous
+
+        // Colour lives in one flat wash over the whole tab rather than in the
+        // waves: painting the crests blue made them read as two solid bands,
+        // where a single faint tint keeps the glass and just gives it a hue.
+        let tint = CALayer()
+        tint.frame = CGRect(origin: .zero, size: size)
+        tint.backgroundColor = NSColor(srgbRed: 0.30, green: 0.62, blue: 0.98,
+                                       alpha: Palette.isDark ? 0.16 : 0.12).cgColor
+        host.addSublayer(tint)
+
+        // Back wave: long, slow, sits a touch lower.
+        host.addSublayer(wave(in: size, period: size.width * 1.15, amplitude: 2.6,
+                              level: 0.46, alpha: 0.16, seconds: 3.4, bob: 1.2))
+        // Front wave: shorter and quicker, so the two cross.
+        host.addSublayer(wave(in: size, period: size.width * 0.72, amplitude: 2.0,
+                              level: 0.40, alpha: 0.22, seconds: 2.1, bob: 0.9))
+        return host
+    }
+
+    private static func wave(in size: NSSize, period: CGFloat, amplitude: CGFloat,
+                             level: CGFloat, alpha: CGFloat, seconds: Double,
+                             bob: CGFloat) -> CALayer {
+        let width = period * 2 + size.width      // room to slide a full period
+        let path = CGMutablePath()
+        let base = size.height * level
+        path.move(to: CGPoint(x: 0, y: -size.height))
+        path.addLine(to: CGPoint(x: 0, y: base))
+        var x: CGFloat = 0
+        while x <= width {
+            let y = base + sin(x / period * .pi * 2) * amplitude
+            path.addLine(to: CGPoint(x: x, y: y))
+            x += 2
+        }
+        path.addLine(to: CGPoint(x: width, y: -size.height))
+        path.closeSubpath()
+
+        let shape = CAShapeLayer()
+        shape.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
+        shape.path = path
+        shape.fillColor = NSColor.white.withAlphaComponent(alpha).cgColor
+
+        let slide = CABasicAnimation(keyPath: "position.x")
+        slide.fromValue = shape.position.x
+        slide.toValue = shape.position.x - period
+        slide.duration = seconds
+        slide.repeatCount = .infinity
+        slide.isRemovedOnCompletion = false
+
+        // A slow rise and fall as well, so the waterline itself breathes.
+        let rise = CABasicAnimation(keyPath: "position.y")
+        rise.fromValue = shape.position.y - bob
+        rise.toValue = shape.position.y + bob
+        rise.duration = seconds * 1.7
+        rise.autoreverses = true
+        rise.repeatCount = .infinity
+        rise.isRemovedOnCompletion = false
+        rise.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+
+        shape.add(slide, forKey: "slide")
+        shape.add(rise, forKey: "rise")
+        return shape
+    }
+}
+
+final class NubCard: CardView {
+    private let view = NubView()
+    private weak var dock: Dock?
+    /// Taller than the header bars, so the icon has room to be seen rather
+    /// than squeezed into a strip meant for text.
+    static let size = NSSize(width: 74, height: 28)
+
+    init(dock: Dock) {
+        self.dock = dock
+        super.init(corner: NubCard.size.height / 2, shadow: 8, clear: true)
+        view.owner = self
+        view.autoresizingMask = [.width, .height]
+        content = view
+    }
+
+    func press() { dock?.openFromTab() }
+    func drag(by delta: CGSize) { dock?.moveAnchor(by: delta) }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(counts: (waiting: Int, working: Int, idle: Int)) {
+        guard view.counts != counts else { return }
+        view.counts = counts
+        view.needsDisplay = true
+    }
+}
+
+final class NubView: NSView {
+    weak var owner: NubCard?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+    var counts: (waiting: Int, working: Int, idle: Int) = (0, 0, 0)
+    private var travelled: CGFloat = 0
+    private var sheen: CALayer?
+
+    /// Built when the frame is set, which is the one moment guaranteed to
+    /// happen: layout() is not called on a view that has no constraints.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard newSize.width > 0, sheen?.frame.size != newSize else { return }
+        sheen?.removeFromSuperlayer()
+        let made = Sheen.make(size: newSize, corner: newSize.height / 2)
+        layer?.addSublayer(made)
+        sheen = made
+    }
+
+    /// The tab is the whole dock while folded, so it has to be the thing you
+    /// drag to move it — there is no header grip to reach for. A press that
+    /// went somewhere is a drag, not a press.
+    override func mouseDown(with event: NSEvent) { travelled = 0 }
+
+    override func mouseDragged(with event: NSEvent) {
+        travelled += abs(event.deltaX) + abs(event.deltaY)
+        owner?.drag(by: CGSize(width: event.deltaX, height: event.deltaY))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if travelled < 4 { owner?.press() }
+        travelled = 0
+    }
+
+    /// Fetched once: the tab redraws whenever a count changes.
+    static let badge: NSImage = {
+        let icon = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 1, height: 1))
+        icon.size = NSSize(width: 48, height: 48)
+        return icon
+    }()
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill(using: .copy)
+
+        // Nothing laid over the glass. A sheen across the top half was tried
+        // and it did the one thing the tab must not: it covered the desktop.
+        // On a surface this small there is no room for both a highlight and
+        // the wallpaper, and the wallpaper is what makes it read as glass.
+        let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                xRadius: bounds.height / 2 - 0.5,
+                                yRadius: bounds.height / 2 - 0.5)
+        edge.lineWidth = 1
+        NSColor.white.withAlphaComponent(Palette.isDark ? 0.25 : 0.60).setStroke()
+        edge.stroke()
+
+        var parts: [(String, NSColor)] = []
+        if counts.waiting > 0 { parts.append(("\(counts.waiting)", .systemOrange)) }
+        if counts.working > 0 { parts.append(("\(counts.working)", .systemGreen)) }
+        if parts.isEmpty { parts = [("·", Palette.meta)] }
+
+        // Numbers in the text colour, the dot in the state's own hue: the dot
+        // is the only colour on the tab, so it carries the meaning alone.
+        let attrs: (NSColor) -> [NSAttributedString.Key: Any] = { _ in
+            [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+             .foregroundColor: Palette.title, .kern: 0.2]
+        }
+        let dot: CGFloat = 5
+        let tight: CGFloat = 4      // dot to its number
+        let apart: CGFloat = 9      // one pair to the next
+
+        var run: CGFloat = 0
+        for (text, colour) in parts {
+            run += dot + tight
+                + (text as NSString).size(withAttributes: attrs(colour)).width
+        }
+        run += apart * CGFloat(max(parts.count - 1, 0))
+        var x = (bounds.width - run) / 2
+
+        // A dot before each count, so the two states are told apart by shape
+        // as well as by colour.
+        for (text, colour) in parts {
+            let style = attrs(colour)
+            let size = (text as NSString).size(withAttributes: style)
+            colour.setFill()
+            NSBezierPath(ovalIn: NSRect(x: x, y: (bounds.height - dot) / 2,
+                                        width: dot, height: dot)).fill()
+            x += dot + tight
+            (text as NSString).draw(
+                at: NSPoint(x: x, y: (bounds.height - size.height) / 2),
+                withAttributes: style)
+            x += size.width + apart
+        }
+    }
 }
 
 /// The one window everything lives in.
@@ -805,11 +1222,19 @@ final class HeaderView: NSView {
     private var dragging = false
     private var hoverGrip = false
     private var hoverGear = false
+    private var hoverFold = false
 
     override var isFlipped: Bool { true }
     private var gripRect: NSRect { NSRect(x: 0, y: 0, width: 26, height: bounds.height) }
     private var gearRect: NSRect {
         NSRect(x: 26, y: 0, width: 22, height: bounds.height)
+    }
+    /// Only while the column is out. In the folded mode the tab underneath
+    /// does the opening and closing, and a second control for it up here just
+    /// asked the same question twice.
+    private var foldRect: NSRect {
+        Settings.shared.collapsed ? .zero
+            : NSRect(x: 48, y: 0, width: 22, height: bounds.height)
     }
 
     override func updateTrackingAreas() {
@@ -825,9 +1250,11 @@ final class HeaderView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         let grip = gripRect.contains(point)
         let gear = gearRect.contains(point)
-        if grip != hoverGrip || gear != hoverGear {
+        let fold = foldRect.contains(point)
+        if grip != hoverGrip || gear != hoverGear || fold != hoverFold {
             hoverGrip = grip
             hoverGear = gear
+            hoverFold = fold
             needsDisplay = true
         }
     }
@@ -835,11 +1262,16 @@ final class HeaderView: NSView {
     override func mouseExited(with event: NSEvent) {
         hoverGrip = false
         hoverGear = false
+        hoverFold = false
         needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if foldRect.contains(point) {
+            owner?.fold()
+            return
+        }
         if gearRect.contains(point), let menu = Menus.build?() {
             // Upwards. The header sits on top of the stack, and this view is
             // flipped, so opening downwards would lay the menu straight over
@@ -876,6 +1308,17 @@ final class HeaderView: NSView {
             }
         }
 
+        if !Settings.shared.collapsed {
+            let fold = Marks.symbol("arrow.down.right.and.arrow.up.left", size: 9,
+                                    description: "접어두기")
+            Marks.tinted(fold,
+                         NSColor.labelColor.withAlphaComponent(hoverFold ? 0.7 : 0.32),
+                         key: "fold\(hoverFold)")
+                .draw(in: NSRect(x: foldRect.midX - fold.size.width / 2,
+                                 y: bounds.height / 2 - fold.size.height / 2,
+                                 width: fold.size.width, height: fold.size.height))
+        }
+
         let gear = Marks.symbol("slider.horizontal.3", size: 10,
                                 description: "설정")
         Marks.tinted(gear, NSColor.labelColor.withAlphaComponent(hoverGear ? 0.7 : 0.32),
@@ -884,25 +1327,9 @@ final class HeaderView: NSView {
                              y: bounds.height / 2 - gear.size.height / 2,
                              width: gear.size.width, height: gear.size.height))
 
-        var parts: [(String, NSColor)] = []
-        if counts.waiting > 0 { parts.append(("대기 \(counts.waiting)", .systemOrange)) }
-        if counts.working > 0 { parts.append(("작업 \(counts.working)", .systemGreen)) }
-        if counts.idle > 0 {
-            parts.append(("유휴 \(counts.idle)", NSColor.labelColor.withAlphaComponent(0.35)))
-        }
-        if parts.isEmpty { parts = [("세션 없음", Palette.meta)] }
-
-        var x = bounds.width - Layout.padding
-        for (text, color) in parts.reversed() {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: color, .kern: 0.2]
-            let size = (text as NSString).size(withAttributes: attrs)
-            x -= size.width
-            (text as NSString).draw(at: NSPoint(x: x, y: bounds.height / 2 - size.height / 2),
-                                    withAttributes: attrs)
-            x -= 9
-        }
+        // The counts live on the folded tab, where they are the only thing
+        // left to read. Repeating them over a column you can already see was
+        // saying the same thing twice.
     }
 }
 
@@ -912,12 +1339,30 @@ final class Dock {
     private var rows: [RowCard] = []
     private lazy var window = DockWindow(dock: self)
     private lazy var header = HeaderCard(dock: self)
+    private lazy var more = MoreCard(dock: self)
+    private lazy var nub = NubCard(dock: self)
+
+    /// Whether the column is showing while folded, because the pointer is on
+    /// the tab. It lasts as long as the pointer does, so it is held here
+    /// rather than saved.
+    private var peeking = false
+
+    /// How far back the column currently reaches. Held here rather than in
+    /// settings: it lasts as long as the question that made you press it.
+    private var reach = SessionStore.staleAfter
+    private var older = 0
+    private var shrinkTimer: Timer?
+
+    /// How long a widened column stays open once nothing is touching it.
+    private static let shrinkAfter: TimeInterval = 12
     private var hoverTimer: Timer?
     private var reloadTimer: Timer?
     private var lastCounts: (waiting: Int, working: Int, idle: Int) = (0, 0, 0)
 
     func start() {
         window.content.cardHost.addSubview(header)
+        window.content.cardHost.addSubview(more)
+        window.content.cardHost.addSubview(nub)
         reload()
         reloadTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             self?.reload()
@@ -931,6 +1376,7 @@ final class Dock {
     }
 
     func stop() {
+        shrinkTimer?.invalidate()
         hoverTimer?.invalidate()
         reloadTimer?.invalidate()
         window.orderOut(nil)
@@ -939,7 +1385,7 @@ final class Dock {
     // MARK: data
 
     func reload() {
-        let sessions = SessionStore.load()
+        let sessions = SessionStore.load(reach: reach)
             .filter { Settings.shared.showIdle || $0.state != "idle" }
             .filter { Settings.shared.showDelegated || !$0.isDelegated }
             .filter { !Settings.shared.isHidden(source: $0.sourceKey) }
@@ -980,6 +1426,22 @@ final class Dock {
         )
         lastCounts = counts
         header.set(counts: counts)
+        nub.set(counts: counts)
+
+        // The button only earns its row when there is something behind it.
+        older = SessionStore.countBeyond(reach)
+        let next = SessionStore.reaches.first { $0 > reach }
+        let widened = reach > SessionStore.staleAfter
+        if older > 0, let next {
+            more.set(label: "\(Int(next / 3600))시간 전까지 더 보기  ·  \(older)건",
+                     home: widened)
+            more.isHidden = false
+        } else if widened {
+            more.set(label: "\(Int(reach / 3600))시간 전까지 모두 보는 중", home: true)
+            more.isHidden = false
+        } else {
+            more.isHidden = true
+        }
         if !window.isVisible { window.orderFrontRegardless() }
 
         layout(animated: true)
@@ -1006,7 +1468,9 @@ final class Dock {
     func pointerMoved() { updateHover() }
 
     private func updateHover() {
-        guard !rows.isEmpty, window.isVisible else { return }
+        guard window.isVisible else { return }
+        guard !rows.isEmpty, !(Settings.shared.collapsed && !peeking) else { return }
+        if reach > SessionStore.staleAfter { armShrink() }
         let point = window.convertPoint(fromScreen: NSEvent.mouseLocation)
 
         // Half the gap counts as part of the card on either side. A pointer
@@ -1037,18 +1501,56 @@ final class Dock {
         // The window is sized for the tallest the column can get, so opening a
         // row never resizes it. A window resize is the app's own work, frame
         // by frame; the cards inside are layers, and moving them is not.
+        let right = screen.visibleFrame.maxX - Layout.inset - offset.width
+        let bottom = screen.visibleFrame.minY + Layout.inset + offset.height
+
         var stack = Layout.headerHeight + Layout.gap
+        if Settings.shared.collapsed { stack += NubCard.size.height + Layout.gap }
+        if !more.isHidden { stack += Layout.headerHeight + Layout.gap }
         for _ in rows { stack += Layout.rowHeight + Layout.gap }
         let tallest = stack + Layout.detailMax
         let size = NSSize(width: Layout.width + pad * 2, height: tallest + pad * 2)
 
-        let right = screen.visibleFrame.maxX - Layout.inset - offset.width
-        let bottom = screen.visibleFrame.minY + Layout.inset + offset.height
         let origin = NSPoint(x: right - Layout.width - pad, y: bottom - pad)
         let wanted = NSRect(origin: origin, size: size)
         if window.frame != wanted { window.setFrame(wanted, display: true) }
 
+        // Folded away, the column is a single tab in the corner it grows from.
+        // The tab stays put once the column is open, since pressing it again
+        // is how it closes — taking it away left nothing to press.
+        let collapsed = Settings.shared.collapsed
+        let folded = collapsed && !peeking
+        nub.isHidden = !collapsed
+        header.isHidden = folded
+        rows.forEach { $0.isHidden = folded }
+        if folded { more.isHidden = true }
+
+        if folded {
+            let tab = NSRect(x: pad + Layout.width - NubCard.size.width, y: pad,
+                             width: NubCard.size.width, height: NubCard.size.height)
+            let wanted = NSRect(x: right - Layout.width - pad, y: bottom - pad,
+                                width: Layout.width + pad * 2,
+                                height: NubCard.size.height + pad * 2)
+            if window.frame != wanted { window.setFrame(wanted, display: true) }
+            nub.frame = tab
+            nub.set(counts: lastCounts)
+            window.content.castShadows([(tab, NubCard.size.height / 2)])
+            return
+        }
+
         var y = pad
+        // The tab keeps the bottom of the column when the mode is on.
+        let tab = collapsed
+            ? NSRect(x: pad + Layout.width - NubCard.size.width, y: y,
+                     width: NubCard.size.width, height: NubCard.size.height)
+            : nil
+        if tab != nil { y += NubCard.size.height + Layout.gap }
+
+        // Below the oldest row, which is where the column runs out.
+        let ledge = more.isHidden ? nil
+            : NSRect(x: pad, y: y, width: Layout.width, height: Layout.headerHeight)
+        if ledge != nil { y += Layout.headerHeight + Layout.gap }
+
         var targets: [(RowCard, NSRect)] = []
         for card in rows.reversed() {
             let height = (card.isOpen ? card.expandedSize : card.collapsedSize).height
@@ -1072,9 +1574,13 @@ final class Dock {
             }
             if animated {
                 self.header.animator().frame = crown
+                if let ledge { self.more.animator().frame = ledge }
+                if let tab { self.nub.animator().frame = tab }
                 for (card, box) in moved { card.animator().frame = box }
             } else {
                 self.header.frame = crown
+                if let ledge { self.more.frame = ledge }
+                if let tab { self.nub.frame = tab }
                 for (card, box) in moved { card.frame = box }
             }
         }
@@ -1089,9 +1595,73 @@ final class Dock {
         // `0 0 transparent` under native glass, `0 3px 16px` in the CSS
         // fallback.
         var boxes: [(NSRect, CGFloat)] = [(crown, Layout.headerHeight / 2)]
+        if let ledge { boxes.append((ledge, Layout.headerHeight / 2)) }
+        if let tab { boxes.append((tab, NubCard.size.height / 2)) }
         for (card, box) in targets { boxes.append((box, Layout.corner)) }
         window.content.castShadows(boxes)
 
+    }
+
+    /// One rung further back, or all the way home from the last one.
+    func reachFurther() {
+        guard let next = SessionStore.reaches.first(where: { $0 > reach }), older > 0
+        else { return }
+        reach = next
+        reload()
+        armShrink()
+    }
+
+    /// Open the column from the tab.
+    ///
+    /// Hovering used to do this, which meant the column appeared whenever the
+    /// pointer crossed the corner on its way somewhere else. A press says you
+    /// meant it; the arrow in the header puts it back.
+    func openFromTab() {
+        guard Settings.shared.collapsed else { return }
+        peeking.toggle()
+        if !peeking { rows.forEach { $0.setOpen(false) } }
+        reload()
+    }
+
+    /// Fold the column away, or bring it back for good.
+    func toggleCollapsed() {
+        if Settings.shared.collapsed && peeking {
+            // Opened from the tab: the arrow puts it back rather than leaving
+            // the mode, which is what someone reaching for it there means.
+            peeking = false
+        } else {
+            Settings.shared.collapsed.toggle()
+            peeking = false
+        }
+        rows.forEach { $0.setOpen(false) }
+        reload()
+    }
+
+    /// Straight back to the usual few hours, however far it climbed.
+    func reachHome() {
+        shrinkTimer?.invalidate()
+        shrinkTimer = nil
+        reach = SessionStore.staleAfter
+        reload()
+    }
+
+    /// Start the column folding back on its own.
+    ///
+    /// Reaching further is for finding one thing, so the extra rows go away by
+    /// themselves rather than being left to push everything else off screen.
+    /// The countdown restarts while the pointer is on the dock, since folding
+    /// the list away under someone reading it is the one thing worse than
+    /// leaving it open.
+    private func armShrink() {
+        shrinkTimer?.invalidate()
+        shrinkTimer = nil
+        guard reach > SessionStore.staleAfter else { return }
+        shrinkTimer = Timer.scheduledTimer(withTimeInterval: Dock.shrinkAfter,
+                                           repeats: false) { [weak self] _ in
+            guard let self, self.reach > SessionStore.staleAfter else { return }
+            self.reach = SessionStore.staleAfter
+            self.reload()
+        }
     }
 
     func moveAnchor(by delta: CGSize) {
@@ -1106,7 +1676,10 @@ final class Dock {
     }
 
     func activate(_ session: Session) {
+        // Opening a card is the acknowledgement; the ripple has done its job.
+        Settings.shared.acknowledge(session.id, updated: session.updated)
         Route.open(session)
+        rows.first { $0.session?.id == session.id }?.refresh()
     }
 
     /// Clear a session away until it does something new.

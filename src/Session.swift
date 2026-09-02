@@ -88,6 +88,15 @@ struct Session: Codable, Equatable {
         }
     }
 
+    /// Whether this one should still be asking for attention.
+    ///
+    /// The ripple is for a turn nobody has looked at yet. Going on age alone
+    /// meant it kept pulsing after the card had been opened and read, which
+    /// teaches people to ignore it.
+    var unseen: Bool {
+        mark == .yourTurn && !Settings.shared.wasSeen(id, updated: updated)
+    }
+
     /// The line that names this session. Falls back to the folder when the
     /// transcript has not been scanned yet.
     var headline: String {
@@ -122,17 +131,42 @@ enum SessionStore {
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: ".local/state/chat-sessions")
 
-    /// Sessions quiet for longer than this are not worth a row.
+    /// How far back the dock shows without being asked.
     static let staleAfter: TimeInterval = 6 * 3600
 
-    static func load() -> [Session] {
+    /// The rungs the reach climbs each time the button at the bottom is
+    /// pressed. It resets when the app restarts, since reaching further is
+    /// something you do to answer a question, not a setting you keep.
+    static let reaches: [TimeInterval] = [6 * 3600, 24 * 3600, 48 * 3600, 72 * 3600]
+
+    /// How many sessions sit further back than the given reach.
+    static func countBeyond(_ reach: TimeInterval) -> Int {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path)
+        else { return 0 }
+        let decoder = JSONDecoder()
+        let cutoff = Date().timeIntervalSince1970 - reach
+        var total = 0
+        for name in names where name.hasSuffix(".json")
+            && (name.hasPrefix("claude-") || name.hasPrefix("codex-")) {
+            guard let data = try? Data(contentsOf: directory.appending(path: name)),
+                  let session = try? decoder.decode(Session.self, from: data),
+                  session.updated <= cutoff else { continue }
+            total += 1
+        }
+        return total
+    }
+
+    static func load(reach: TimeInterval = staleAfter) -> [Session] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
         let decoder = JSONDecoder()
-        let cutoff = Date().timeIntervalSince1970 - staleAfter
+        let cutoff = Date().timeIntervalSince1970 - reach
 
         var out: [Session] = []
-        for name in names where name.hasSuffix(".json") {
+        // Only the session records: the ledger shares this directory.
+        for name in names where name.hasSuffix(".json")
+            && (name.hasPrefix("claude-") || name.hasPrefix("codex-")) {
             guard let data = try? Data(contentsOf: directory.appending(path: name)),
                   let session = try? decoder.decode(Session.self, from: data),
                   session.updated > cutoff else { continue }
@@ -155,5 +189,34 @@ enum Age {
         case ..<86_400: return "\(seconds / 3600)시간 전"
         default: return "\(seconds / 86_400)일 전"
         }
+    }
+}
+
+
+/// What the day cost, in waiting.
+///
+/// The dock is the one thing that sees both sides of every handover: when a
+/// session stopped and when it was answered. Counted up, that says whether the
+/// person or the agents are the ones holding the work — which a list of
+/// current states cannot.
+struct Ledger: Codable {
+    let day: String
+    let waited_on_me: Double
+    let waited_on_them: Double
+    let longest_chat: String
+    let longest_seconds: Double
+
+    static func load() -> Ledger? {
+        let path = SessionStore.directory.appending(path: "ledger.json")
+        guard let data = try? Data(contentsOf: path) else { return nil }
+        return try? JSONDecoder().decode(Ledger.self, from: data)
+    }
+
+    static func spell(_ seconds: Double) -> String {
+        let whole = Int(seconds.rounded())
+        if whole < 60 { return "\(whole)초" }
+        if whole < 3600 { return "\(whole / 60)분" }
+        let hours = whole / 3600, minutes = (whole % 3600) / 60
+        return minutes == 0 ? "\(hours)시간" : "\(hours)시간 \(minutes)분"
     }
 }

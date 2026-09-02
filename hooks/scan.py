@@ -121,6 +121,10 @@ def codex_homes():
 
 # A transcript quiet for longer than this is not a session anyone is watching.
 ACTIVE_WINDOW = 6 * 3600
+# How far back records are kept, as opposed to how far back the dock shows by
+# default. The dock can be asked to reach further than its usual few hours, and
+# it can only reach as far as something was kept.
+KEEP_WINDOW = 72 * 3600
 # Touched this recently and it is probably mid-answer.
 WORKING_WINDOW = 90
 # A turn that has not written anything for this long is not still running.
@@ -369,6 +373,88 @@ def claude_text(entry):
 TITLE_STORE = os.path.join(STATE_DIR, "titles.sqlite")
 
 
+LEDGER = os.path.join(STATE_DIR, "ledger.json")
+# One sample is never worth more than this. The scan stops while the machine
+# sleeps or the app is quit, and without a cap the gap on waking would be
+# booked as hours of somebody waiting.
+SAMPLE_CAP = 120
+
+
+def keep_ledger(db, sessions, now):
+    """Add the time since the last look to whatever each session was doing.
+
+    Sampling rather than watching for transitions: the scan already runs every
+    few seconds, and a missed transition would cost a whole span while a missed
+    sample costs only the interval.
+    """
+    if db is None:
+        return
+    try:
+        db.execute("CREATE TABLE IF NOT EXISTS seen ("
+                   "id TEXT PRIMARY KEY, state TEXT, at REAL)")
+        db.execute("CREATE TABLE IF NOT EXISTS ledger ("
+                   "day TEXT, state TEXT, seconds REAL, PRIMARY KEY (day, state))")
+        held = {row[0]: (row[1], row[2])
+                for row in db.execute("SELECT id, state, at FROM seen")}
+        day = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+        for key, state in sessions.items():
+            was = held.get(key)
+            if was and was[0] in ("waiting", "working"):
+                span = min(now - was[1], SAMPLE_CAP)
+                if span > 0:
+                    db.execute(
+                        "INSERT INTO ledger (day, state, seconds) VALUES (?, ?, ?) "
+                        "ON CONFLICT(day, state) DO UPDATE SET "
+                        "seconds = seconds + excluded.seconds", (day, was[0], span))
+            db.execute("INSERT INTO seen (id, state, at) VALUES (?, ?, ?) "
+                       "ON CONFLICT(id) DO UPDATE SET state = excluded.state, "
+                       "at = excluded.at", (key, state, now))
+        gone = set(held) - set(sessions)
+        for key in gone:
+            db.execute("DELETE FROM seen WHERE id = ?", (key,))
+        db.commit()
+    except sqlite3.Error:
+        return
+    publish_ledger(db, day, now)
+
+
+def publish_ledger(db, day, now):
+    """A small file the dock reads, so it needs no database of its own."""
+    try:
+        rows = dict(db.execute(
+            "SELECT state, seconds FROM ledger WHERE day = ?", (day,)).fetchall())
+    except sqlite3.Error:
+        return
+    longest = ("", 0.0)
+    for name in os.listdir(STATE_DIR):
+        if not name.endswith(".json") or not name.startswith(("claude-", "codex-")):
+            continue
+        try:
+            with open(os.path.join(STATE_DIR, name)) as fh:
+                record = json.load(fh)
+        except (IOError, OSError, ValueError):
+            continue
+        if record.get("state") != "waiting":
+            continue
+        idle = now - float(record.get("updated", 0))
+        if idle > longest[1]:
+            longest = (record.get("chat") or record.get("project") or "", idle)
+    summary = {
+        "day": day,
+        "waited_on_me": rows.get("waiting", 0.0),
+        "waited_on_them": rows.get("working", 0.0),
+        "longest_chat": longest[0],
+        "longest_seconds": longest[1],
+    }
+    tmp = LEDGER + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(summary, fh, ensure_ascii=False)
+        os.replace(tmp, LEDGER)
+    except OSError:
+        pass
+
+
 def title_store():
     """A title, once learnt, is kept.
 
@@ -532,7 +618,7 @@ def settle(state, touched, now):
 def claude_sessions():
     titles = claude_titles()
     for path, mtime in newest_files(CLAUDE_ROOT, ".jsonl"):
-        if time.time() - mtime > ACTIVE_WINDOW:
+        if time.time() - mtime > KEEP_WINDOW:
             break
         session_id = os.path.basename(path)[:-len(".jsonl")]
         cwd = ""
@@ -566,7 +652,7 @@ def claude_sessions():
             cwd = folder.replace("-", "/", 1).replace("-", "/")
         yield (session_id, "claude", cwd, title, chat,
                settle(state, mtime, time.time()),
-               last_spoken(tail) or mtime, "", filed)
+               last_spoken(tail) or mtime, "", filed, "")
 
 
 def codex_query(path, sql):
@@ -581,6 +667,24 @@ def codex_query(path, sql):
         return []
 
 
+# Codex hands work to sub-agents by opening a thread of its own for each one,
+# so a single question of yours can leave half a dozen nameless rows behind.
+# The index says which those are: `thread_source` is "subagent" for a spawned
+# run and "guardian_review" for the review pass, and for a spawn the `source`
+# column carries the parent thread's id. Delegated work, in other words, in
+# exactly the sense the dock already has a switch for.
+SPAWNED = ("subagent", "guardian_review")
+
+
+def spawned_by(thread_source, source):
+    """"agent" for a thread Codex opened for itself, "" for one you opened."""
+    if (thread_source or "").strip() in SPAWNED:
+        return "agent"
+    if (source or "").lstrip().startswith('{"subagent"'):
+        return "agent"
+    return ""
+
+
 def codex_sessions():
     """Straight from Codex's thread index, which knows the title it displays.
 
@@ -592,17 +696,19 @@ def codex_sessions():
         # `name` is the summarised title Codex shows once it has one; `title`
         # is only ever the first message. Prefer the summary, fall back to it.
         rows = codex_query(os.path.join(home, "state_5.sqlite"), """
-            SELECT id, COALESCE(NULLIF(name, ''), title), cwd, updated_at, rollout_path
+            SELECT id, COALESCE(NULLIF(name, ''), title), cwd, updated_at, rollout_path,
+                   thread_source, source
               FROM threads
              WHERE archived = 0
              ORDER BY updated_at DESC
              LIMIT 60
         """)
-        for thread_id, title, cwd, updated_at, rollout_path in rows:
+        for (thread_id, title, cwd, updated_at, rollout_path,
+             thread_source, source) in rows:
             when = float(updated_at or 0)
             if when > 1e11:          # some rows are milliseconds
                 when /= 1000.0
-            if now - when > ACTIVE_WINDOW:
+            if now - when > KEEP_WINDOW:
                 break
 
             chat = clean(title or "")
@@ -617,7 +723,8 @@ def codex_sessions():
                     text = payload.get("text") or payload.get("message") or ""
                     if isinstance(text, str) and text.strip():
                         last = text
-            yield thread_id, "codex", cwd or "", last, chat, state, when, app, ""
+            yield (thread_id, "codex", cwd or "", last, chat, state, when, app, "",
+                   spawned_by(thread_source, source))
 
 
 def main():
@@ -625,13 +732,15 @@ def main():
     now = time.time()
     written = 0
     seen = set()
+    booked = {}
     store = title_store()
     remembered = recall_titles(store)
 
     for (session_id, tool, cwd, title, chat, state, mtime, app,
-         filed) in list(claude_sessions()) + list(codex_sessions()):
+         filed, origin) in list(claude_sessions()) + list(codex_sessions()):
         path = os.path.join(STATE_DIR, "%s-%s.json" % (tool, session_id))
         seen.add(path)
+        booked[path] = state
         chat = " ".join((chat or "").split())[:80]
         if chat:
             remember_title(store, session_id, chat, now)
@@ -656,6 +765,9 @@ def main():
                         changed = True
                     if filed and existing.get("filed") != filed:
                         existing["filed"] = filed
+                        changed = True
+                    if origin and existing.get("origin") != origin:
+                        existing["origin"] = origin
                         changed = True
                     # How far the transcript is allowed to overrule a hook
                     # depends on what that tool's hooks actually report.
@@ -718,6 +830,9 @@ def main():
             # The id the desktop app files this conversation under, which is
             # what a link has to name to land on it rather than make another.
             "filed": filed,
+            # Empty unless the thread was opened by the agent rather than by
+            # you; the dock keeps those behind the delegated-work switch.
+            "origin": origin,
             "term_program": "",
             "term_session": "",
             "window_title": "",
@@ -730,7 +845,10 @@ def main():
 
     # Drop anything that has gone quiet for good.
     for name in os.listdir(STATE_DIR):
-        if not name.endswith(".json"):
+        # Only the session records. The ledger lives in this directory too, and
+        # sweeping it up as a session with no timestamp had it deleted on every
+        # pass and written again straight after.
+        if not name.endswith(".json") or not name.startswith(("claude-", "codex-")):
             continue
         path = os.path.join(STATE_DIR, name)
         try:
@@ -750,12 +868,16 @@ def main():
             if path not in seen and now - float(record.get("updated", 0)) > ORPHAN_GRACE:
                 os.remove(path)
                 continue
-            if now - float(record.get("updated", 0)) > ACTIVE_WINDOW:
+            if now - float(record.get("updated", 0)) > KEEP_WINDOW:
                 os.remove(path)
         except (IOError, OSError, ValueError):
             continue
 
     if store is not None:
+        keep_ledger(store, {
+            os.path.basename(path)[:-len(".json")]: state
+            for path, state in booked.items()
+        }, now)
         forget_titles(store, now - TITLE_MEMORY)
         try:
             store.commit()
