@@ -899,15 +899,6 @@ enum Sheen {
         host.cornerRadius = corner
         host.cornerCurve = .continuous
 
-        // Colour lives in one flat wash over the whole tab rather than in the
-        // waves: painting the crests blue made them read as two solid bands,
-        // where a single faint tint keeps the glass and just gives it a hue.
-        let tint = CALayer()
-        tint.frame = CGRect(origin: .zero, size: size)
-        tint.backgroundColor = NSColor(srgbRed: 0.30, green: 0.62, blue: 0.98,
-                                       alpha: Palette.isDark ? 0.16 : 0.12).cgColor
-        host.addSublayer(tint)
-
         // Back wave: long, slow, sits a touch lower.
         host.addSublayer(wave(in: size, period: size.width * 1.15, amplitude: 2.6,
                               level: 0.46, alpha: 0.16, seconds: 3.4, bob: 1.2))
@@ -937,7 +928,13 @@ enum Sheen {
         let shape = CAShapeLayer()
         shape.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
         shape.path = path
-        shape.fillColor = NSColor.white.withAlphaComponent(alpha).cgColor
+        // On the pale wash a white crest disappears, so the light theme draws
+        // the water as a faint shade rather than a highlight. Kept well under
+        // the tint's own strength: a shadow, not a stripe.
+        shape.fillColor = (Palette.isDark
+            ? NSColor.white.withAlphaComponent(alpha)
+            : NSColor(srgbRed: 0.24, green: 0.42, blue: 0.66,
+                      alpha: alpha * 0.62)).cgColor
 
         let slide = CABasicAnimation(keyPath: "position.x")
         slide.fromValue = shape.position.x
@@ -1041,10 +1038,19 @@ final class NubView: NSView {
         NSColor.clear.setFill()
         dirtyRect.fill(using: .copy)
 
-        // Nothing laid over the glass. A sheen across the top half was tried
-        // and it did the one thing the tab must not: it covered the desktop.
-        // On a surface this small there is no room for both a highlight and
-        // the wallpaper, and the wallpaper is what makes it read as glass.
+        // The wash goes on here rather than in a layer of its own: a sublayer
+        // sits above whatever the view draws, so the tint was covering the
+        // very numbers it was meant to sit behind. Painted first, it backs
+        // them instead — bright enough to read against a busy desktop, and
+        // still sheer enough to leave the wallpaper showing.
+        let wash = NSBezierPath(roundedRect: bounds,
+                                xRadius: bounds.height / 2,
+                                yRadius: bounds.height / 2)
+        (Palette.isDark ? NSColor(srgbRed: 0.30, green: 0.44, blue: 0.62, alpha: 0.52)
+                        : NSColor(srgbRed: 0.90, green: 0.95, blue: 1.00, alpha: 0.72))
+            .setFill()
+        wash.fill()
+
         let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
                                 xRadius: bounds.height / 2 - 0.5,
                                 yRadius: bounds.height / 2 - 0.5)
