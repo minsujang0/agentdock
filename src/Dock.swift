@@ -962,9 +962,16 @@ enum Sheen {
 final class NubCard: CardView {
     private let view = NubView()
     private weak var dock: Dock?
-    /// Taller than the header bars, so the icon has room to be seen rather
+    /// Taller than the header bars, so the counts have room to be read rather
     /// than squeezed into a strip meant for text.
     static let size = NSSize(width: 74, height: 28)
+
+    /// Only as wide as the counts need. A fixed 74 left fifteen points of
+    /// empty glass on either side of two small numbers, which made the tab
+    /// read as a bar rather than a badge.
+    static func width(for counts: (waiting: Int, working: Int, idle: Int)) -> CGFloat {
+        max(NubView.run(of: NubView.labels(for: counts)) + 22, 44)
+    }
 
     init(dock: Dock) {
         self.dock = dock
@@ -1032,6 +1039,31 @@ final class NubView: NSView {
         return icon
     }()
 
+    static let dot: CGFloat = 5
+    static let tight: CGFloat = 4      // dot to its number
+    static let apart: CGFloat = 9      // one pair to the next
+
+    /// The counts as they are written out, so width and drawing agree.
+    static func labels(for counts: (waiting: Int, working: Int, idle: Int)) -> [String] {
+        var out: [String] = []
+        if counts.waiting > 0 { out.append("\(counts.waiting)") }
+        if counts.working > 0 { out.append("\(counts.working)") }
+        return out.isEmpty ? ["·"] : out
+    }
+
+    static let numerals: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        .foregroundColor: Palette.title, .kern: 0.2]
+
+    /// How much room the dots and numbers actually take.
+    static func run(of texts: [String]) -> CGFloat {
+        var total: CGFloat = 0
+        for text in texts {
+            total += dot + tight + (text as NSString).size(withAttributes: numerals).width
+        }
+        return total + apart * CGFloat(max(texts.count - 1, 0))
+    }
+
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1058,10 +1090,11 @@ final class NubView: NSView {
         NSColor.white.withAlphaComponent(Palette.isDark ? 0.25 : 0.60).setStroke()
         edge.stroke()
 
-        var parts: [(String, NSColor)] = []
-        if counts.waiting > 0 { parts.append(("\(counts.waiting)", .systemOrange)) }
-        if counts.working > 0 { parts.append(("\(counts.working)", .systemGreen)) }
-        if parts.isEmpty { parts = [("·", Palette.meta)] }
+        var hues: [NSColor] = []
+        if counts.waiting > 0 { hues.append(.systemOrange) }
+        if counts.working > 0 { hues.append(.systemGreen) }
+        if hues.isEmpty { hues = [Palette.meta] }
+        let parts = Array(zip(NubView.labels(for: counts), hues))
 
         // Numbers in the text colour, the dot in the state's own hue: the dot
         // is the only colour on the tab, so it carries the meaning alone.
@@ -1069,17 +1102,10 @@ final class NubView: NSView {
             [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
              .foregroundColor: Palette.title, .kern: 0.2]
         }
-        let dot: CGFloat = 5
-        let tight: CGFloat = 4      // dot to its number
-        let apart: CGFloat = 9      // one pair to the next
-
-        var run: CGFloat = 0
-        for (text, colour) in parts {
-            run += dot + tight
-                + (text as NSString).size(withAttributes: attrs(colour)).width
-        }
-        run += apart * CGFloat(max(parts.count - 1, 0))
-        var x = (bounds.width - run) / 2
+        let dot = NubView.dot
+        let tight = NubView.tight
+        let apart = NubView.apart
+        var x = (bounds.width - NubView.run(of: parts.map { $0.0 })) / 2
 
         // A dot before each count, so the two states are told apart by shape
         // as well as by colour.
@@ -1532,8 +1558,9 @@ final class Dock {
         if folded { more.isHidden = true }
 
         if folded {
-            let tab = NSRect(x: pad + Layout.width - NubCard.size.width, y: pad,
-                             width: NubCard.size.width, height: NubCard.size.height)
+            let span = NubCard.width(for: lastCounts)
+            let tab = NSRect(x: pad + Layout.width - span, y: pad,
+                             width: span, height: NubCard.size.height)
             let wanted = NSRect(x: right - Layout.width - pad, y: bottom - pad,
                                 width: Layout.width + pad * 2,
                                 height: NubCard.size.height + pad * 2)
@@ -1547,8 +1574,8 @@ final class Dock {
         var y = pad
         // The tab keeps the bottom of the column when the mode is on.
         let tab = collapsed
-            ? NSRect(x: pad + Layout.width - NubCard.size.width, y: y,
-                     width: NubCard.size.width, height: NubCard.size.height)
+            ? NSRect(x: pad + Layout.width - NubCard.width(for: lastCounts), y: y,
+                     width: NubCard.width(for: lastCounts), height: NubCard.size.height)
             : nil
         if tab != nil { y += NubCard.size.height + Layout.gap }
 
