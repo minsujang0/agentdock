@@ -1358,14 +1358,13 @@ final class HeaderView: NSView {
         bounds.fill()
         Rim.draw(in: bounds, corner: bounds.height / 2)
 
-        // A single hairline at the very edge, so the handle is findable
-        // without competing with the grip dots beside it.
-        if hoverEdge || sizing {
-            NSColor.labelColor.withAlphaComponent(0.55).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 3, y: bounds.height / 2 - 6,
-                                             width: 2, height: 12),
-                         xRadius: 1, yRadius: 1).fill()
-        }
+        // Always drawn, not just on hover: a control that only appears once
+        // the pointer is already on it is a control nobody finds. It brightens
+        // under the pointer instead.
+        NSColor.labelColor.withAlphaComponent(hoverEdge || sizing ? 0.62 : 0.28).setFill()
+        NSBezierPath(roundedRect: NSRect(x: 3, y: bounds.height / 2 - 6,
+                                         width: 2, height: 12),
+                     xRadius: 1, yRadius: 1).fill()
 
         NSColor.labelColor.withAlphaComponent(hoverGrip ? 0.6 : 0.3).setFill()
         for column in 0..<2 {
