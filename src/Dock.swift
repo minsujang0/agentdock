@@ -11,7 +11,7 @@ import AppKit
 enum Layout {
     /// Set by the user, by dragging the column's left edge or from the menu.
     static var width: CGFloat { CGFloat(Settings.shared.dockWidth) }
-    static let rowHeight: CGFloat = 30
+    static var rowHeight: CGFloat { CGFloat(Settings.shared.rowHeight) }
     static let detailMax: CGFloat = 26
     static let gap: CGFloat = 6
     static let inset: CGFloat = 12
@@ -20,7 +20,9 @@ enum Layout {
     /// Transparent margin around each card, for the shadow to fall into.
     static let shadowPad: CGFloat = 16
     static let padding: CGFloat = 10
-    static let headerHeight: CGFloat = 24
+    /// Kept just under a row, so the crown reads as trim rather than as
+    /// another row you could click.
+    static var headerHeight: CGFloat { max(rowHeight - 6, 22) }
     /// Shortening this to chase a fast sweep made the movement feel clipped
     /// without making it feel any quicker: the work behind a row opening
     /// measures under a millisecond, so the delay being felt is the travel
@@ -1745,6 +1747,14 @@ final class Dock {
     /// Set outright, from the menu.
     func setWidth(_ points: Double) {
         Settings.shared.dockWidth = points
+        layout(animated: true)
+    }
+
+    /// Rows have to be rebuilt: their own height is fixed at the size they
+    /// were made, and only a fresh pass reads the new one.
+    func setRowHeight(_ points: Double) {
+        Settings.shared.rowHeight = points
+        rows.forEach { $0.refresh() }
         layout(animated: true)
     }
 

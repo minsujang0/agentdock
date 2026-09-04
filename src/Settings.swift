@@ -186,12 +186,33 @@ final class Settings {
         }
     }
 
-    /// Narrow enough that a row still fits an icon, a title and a time; wide
-    /// enough to be silly on a large display, which is the user's business.
-    static let widthRange: ClosedRange<Double> = 220...620
+    /// Narrow enough that a row still fits an icon, a title and a time. The
+    /// far end is left to the screen: the dock grows leftwards into empty
+    /// desktop, and on a wide display there is a lot of it. Anything past a
+    /// point was being clamped away mid-drag, which read as the handle
+    /// sticking rather than as a limit being reached.
+    static let widthRange: ClosedRange<Double> = 220...1600
 
     static let widthSteps: [(String, Double)] = [
-        ("좁게", 240), ("보통", 288), ("넓게", 360), ("아주 넓게", 440),
+        ("좁게", 240), ("보통", 288), ("넓게", 360),
+        ("아주 넓게", 460), ("최대한", 640),
+    ]
+
+    /// How tall each row is drawn.
+    ///
+    /// 30 was set against a 288 column. Widened, the same row reads as a
+    /// hairline stretched across the desktop, so this travels with the width
+    /// rather than staying put.
+    var rowHeight: Double {
+        get {
+            let held = defaults.object(forKey: "rowHeight") as? Double ?? 34
+            return min(max(held, 26), 52)
+        }
+        set { defaults.set(min(max(newValue, 26), 52), forKey: "rowHeight") }
+    }
+
+    static let rowSteps: [(String, Double)] = [
+        ("얇게", 28), ("보통", 34), ("두껍게", 40), ("아주 두껍게", 46),
     ]
 
     var anchorOffset: CGSize {

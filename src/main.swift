@@ -199,6 +199,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(widthHolder)
         menu.setSubmenu(widths, for: widthHolder)
 
+        let heights = NSMenu()
+        for (label, points) in Settings.rowSteps {
+            let item = NSMenuItem(title: "\(label) (\(Int(points)))",
+                                  action: #selector(pickRowHeight), keyEquivalent: "")
+            item.target = self
+            item.representedObject = points
+            item.state = abs(Settings.shared.rowHeight - points) < 1 ? .on : .off
+            heights.addItem(item)
+        }
+        let heightHolder = NSMenuItem(title: "행 높이", action: nil, keyEquivalent: "")
+        menu.addItem(heightHolder)
+        menu.setSubmenu(heights, for: heightHolder)
+
         if !listed.isEmpty {
             let holder = NSMenuItem(title: "소스", action: nil, keyEquivalent: "")
             menu.addItem(holder)
@@ -262,6 +275,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func pickWidth(_ sender: NSMenuItem) {
         guard let points = sender.representedObject as? Double else { return }
         dock.setWidth(points)
+    }
+
+    @objc private func pickRowHeight(_ sender: NSMenuItem) {
+        guard let points = sender.representedObject as? Double else { return }
+        dock.setRowHeight(points)
     }
 
     @objc private func toggleSource(_ sender: NSMenuItem) {
