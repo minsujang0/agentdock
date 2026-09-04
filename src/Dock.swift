@@ -9,7 +9,8 @@
 import AppKit
 
 enum Layout {
-    static let width: CGFloat = 288
+    /// Set by the user, by dragging the column's left edge or from the menu.
+    static var width: CGFloat { CGFloat(Settings.shared.dockWidth) }
     static let rowHeight: CGFloat = 30
     static let detailMax: CGFloat = 26
     static let gap: CGFloat = 6
@@ -757,6 +758,7 @@ final class HeaderCard: CardView {
     }
 
     func drag(by delta: CGSize) { dock?.moveAnchor(by: delta) }
+    func resize(by delta: CGFloat) { dock?.resizeWidth(by: delta) }
     func fold() { dock?.toggleCollapsed() }
 }
 
@@ -1252,11 +1254,18 @@ final class HeaderView: NSView {
     weak var owner: HeaderCard?
     var counts: (waiting: Int, working: Int, idle: Int) = (0, 0, 0)
     private var dragging = false
+    private var sizing = false
+    private var hoverEdge = false
     private var hoverGrip = false
     private var hoverGear = false
     private var hoverFold = false
 
     override var isFlipped: Bool { true }
+    /// The column's own left edge. Dragged left it widens, since the dock is
+    /// pinned by its right edge and grows into the desktop beside it. Checked
+    /// before the grip, which starts at the same corner and would otherwise
+    /// swallow every attempt to catch such a narrow strip.
+    private var edgeRect: NSRect { NSRect(x: 0, y: 0, width: 9, height: bounds.height) }
     private var gripRect: NSRect { NSRect(x: 0, y: 0, width: 26, height: bounds.height) }
     private var gearRect: NSRect {
         NSRect(x: 26, y: 0, width: 22, height: bounds.height)
@@ -1280,18 +1289,26 @@ final class HeaderView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let grip = gripRect.contains(point)
+        let edge = edgeRect.contains(point)
+        let grip = !edge && gripRect.contains(point)
         let gear = gearRect.contains(point)
         let fold = foldRect.contains(point)
-        if grip != hoverGrip || gear != hoverGear || fold != hoverFold {
+        if edge != hoverEdge || grip != hoverGrip || gear != hoverGear || fold != hoverFold {
+            hoverEdge = edge
             hoverGrip = grip
             hoverGear = gear
             hoverFold = fold
             needsDisplay = true
         }
+        // Set by hand rather than through a cursor rect: the dock is a
+        // non-activating panel, and AppKit only keeps cursor rects for the
+        // window it thinks is in front.
+        if edge { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
     }
 
     override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+        hoverEdge = false
         hoverGrip = false
         hoverGear = false
         hoverFold = false
@@ -1313,15 +1330,23 @@ final class HeaderView: NSView {
                        in: self)
             return
         }
-        dragging = gripRect.contains(point)
+        sizing = edgeRect.contains(point)
+        dragging = !sizing && gripRect.contains(point)
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if sizing {
+            owner?.resize(by: -event.deltaX)     // leftwards is wider
+            return
+        }
         guard dragging else { return }
         owner?.drag(by: CGSize(width: event.deltaX, height: event.deltaY))
     }
 
-    override func mouseUp(with event: NSEvent) { dragging = false }
+    override func mouseUp(with event: NSEvent) {
+        dragging = false
+        sizing = false
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         // Wiped back to nothing first, the same way a row is.
@@ -1330,6 +1355,15 @@ final class HeaderView: NSView {
         Palette.backing.setFill()
         bounds.fill()
         Rim.draw(in: bounds, corner: bounds.height / 2)
+
+        // A single hairline at the very edge, so the handle is findable
+        // without competing with the grip dots beside it.
+        if hoverEdge || sizing {
+            NSColor.labelColor.withAlphaComponent(0.55).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 3, y: bounds.height / 2 - 6,
+                                             width: 2, height: 12),
+                         xRadius: 1, yRadius: 1).fill()
+        }
 
         NSColor.labelColor.withAlphaComponent(hoverGrip ? 0.6 : 0.3).setFill()
         for column in 0..<2 {
@@ -1695,6 +1729,23 @@ final class Dock {
             self.reach = SessionStore.staleAfter
             self.reload()
         }
+    }
+
+    /// Widen or narrow the column, keeping its pinned right edge where it is.
+    func resizeWidth(by delta: CGFloat) {
+        let wanted = Settings.shared.dockWidth + Double(delta)
+        guard let screen = Screens.target else { return }
+        // Never wider than the desktop it has left of the anchor.
+        let room = Double(screen.visibleFrame.width
+                          - Layout.inset * 2 - Settings.shared.anchorOffset.width)
+        Settings.shared.dockWidth = min(wanted, room)
+        layout(animated: false)
+    }
+
+    /// Set outright, from the menu.
+    func setWidth(_ points: Double) {
+        Settings.shared.dockWidth = points
+        layout(animated: true)
     }
 
     func moveAnchor(by delta: CGSize) {

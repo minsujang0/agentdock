@@ -167,6 +167,33 @@ final class Settings {
     }
 
     /// Where the dock hangs, as an offset from the bottom-right corner.
+    /// How wide the column is drawn.
+    ///
+    /// The dock is pinned by its right edge, so widening it grows leftwards
+    /// into empty desktop rather than pushing the whole thing off screen.
+    /// Titles are what the width buys: a long conversation name is elided at
+    /// 288 and readable well before 400.
+    var dockWidth: Double {
+        get {
+            let held = defaults.object(forKey: "dockWidth") as? Double ?? 288
+            return min(max(held, Settings.widthRange.lowerBound),
+                       Settings.widthRange.upperBound)
+        }
+        set {
+            defaults.set(min(max(newValue, Settings.widthRange.lowerBound),
+                             Settings.widthRange.upperBound),
+                         forKey: "dockWidth")
+        }
+    }
+
+    /// Narrow enough that a row still fits an icon, a title and a time; wide
+    /// enough to be silly on a large display, which is the user's business.
+    static let widthRange: ClosedRange<Double> = 220...620
+
+    static let widthSteps: [(String, Double)] = [
+        ("좁게", 240), ("보통", 288), ("넓게", 360), ("아주 넓게", 440),
+    ]
+
     var anchorOffset: CGSize {
         get {
             CGSize(width: defaults.double(forKey: "anchorX"),

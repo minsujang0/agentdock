@@ -179,6 +179,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(shadeHolder)
         menu.setSubmenu(shades, for: shadeHolder)
 
+        // The left edge of the header resizes the column by hand; these are
+        // here so the feature can be found without knowing that.
+        let widths = NSMenu()
+        for (label, points) in Settings.widthSteps {
+            let item = NSMenuItem(title: "\(label) (\(Int(points)))",
+                                  action: #selector(pickWidth), keyEquivalent: "")
+            item.target = self
+            item.representedObject = points
+            item.state = abs(Settings.shared.dockWidth - points) < 1 ? .on : .off
+            widths.addItem(item)
+        }
+        widths.addItem(.separator())
+        let hint = NSMenuItem(title: "현재 \(Int(Settings.shared.dockWidth))pt — 왼쪽 모서리를 끌어도 됩니다",
+                              action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        widths.addItem(hint)
+        let widthHolder = NSMenuItem(title: "너비", action: nil, keyEquivalent: "")
+        menu.addItem(widthHolder)
+        menu.setSubmenu(widths, for: widthHolder)
+
         if !listed.isEmpty {
             let holder = NSMenuItem(title: "소스", action: nil, keyEquivalent: "")
             menu.addItem(holder)
@@ -237,6 +257,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let value = sender.representedObject as? Double else { return }
         Settings.shared.cardTint = value
         dock.repaint()
+    }
+
+    @objc private func pickWidth(_ sender: NSMenuItem) {
+        guard let points = sender.representedObject as? Double else { return }
+        dock.setWidth(points)
     }
 
     @objc private func toggleSource(_ sender: NSMenuItem) {
