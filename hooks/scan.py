@@ -108,6 +108,60 @@ def codex_home_owners():
     return owners
 
 
+STOCK_CLAUDE_BUNDLE = "com.anthropic.claudefordesktop"
+# Every copy of the desktop app keeps its own session records, and every copy
+# registers the claude:// scheme. Without knowing which copy filed a session,
+# the link goes to whichever copy the OS happens to prefer — which is the clone.
+CLAUDE_SESSION_DIR = "claude-code-sessions"
+
+
+def claude_homes():
+    """Each directory of Claude session records, paired with its app.
+
+    Same shape as `codex_homes`: a Parallelly clone keeps its records inside
+    its own profile directory, and the profile id in the clone's Info.plist is
+    what ties the two together. The stock app owns the plain Application
+    Support directory. A copy nobody can name is still read — its sessions
+    belong in the dock either way — it just gets no owner, and clicking it
+    falls back to letting the OS choose.
+    """
+    homes = []
+    seen = set()
+
+    clones = {}
+    stock = ""
+    for bundle in installed_apps():
+        profile = bundle_value(bundle, "ParallellyProfileID")
+        if profile:
+            clones[profile.upper()] = bundle
+        elif bundle_value(bundle, "CFBundleIdentifier") == STOCK_CLAUDE_BUNDLE:
+            stock = bundle
+
+    def add(path, app):
+        real = os.path.realpath(path)
+        if os.path.isdir(real) and real not in seen:
+            seen.add(real)
+            homes.append((real, app))
+
+    add(CLAUDE_SESSIONS, stock)
+
+    try:
+        profiles = os.listdir(PARALLELLY_PROFILES)
+    except OSError:
+        profiles = []
+    for profile in profiles:
+        add(os.path.join(PARALLELLY_PROFILES, profile, CLAUDE_SESSION_DIR),
+            clones.get(profile.upper(), ""))
+
+    # Copies that keep their records beside the stock directory rather than
+    # inside a Parallelly profile. Nothing names their app, so they are read
+    # for their titles alone.
+    support = os.path.dirname(CLAUDE_SESSIONS)
+    for name in sorted(glob.glob(os.path.join(os.path.dirname(support), "Claude-*"))):
+        add(os.path.join(name, CLAUDE_SESSION_DIR), "")
+    return homes
+
+
 def codex_homes():
     """Each Codex home holding threads, paired with the app that owns it."""
     owners = codex_home_owners()
@@ -504,11 +558,15 @@ def forget_titles(db, before):
 
 
 def claude_titles():
-    """{cli session id: (title, cwd, last activity, app id)}."""
+    """{cli session id: (title, cwd, last activity, app id, owning app)}."""
     out = {}
-    if not os.path.isdir(CLAUDE_SESSIONS):
-        return out
-    for base, _, names in os.walk(CLAUDE_SESSIONS):
+    for home, app in claude_homes():
+        _claude_titles_in(home, app, out)
+    return out
+
+
+def _claude_titles_in(home, app, out):
+    for base, _, names in os.walk(home):
         for name in names:
             if not name.endswith(".json"):
                 continue
@@ -533,7 +591,7 @@ def claude_titles():
             own = str(record.get("sessionId") or "")
             if own.startswith("local_"):
                 own = own[len("local_"):]
-            entry = (title, record.get("cwd") or "", when, own)
+            entry = (title, record.get("cwd") or "", when, own, app)
             # One conversation can have more than one record: the app keeps a
             # separate one for a session that was bridged to a remote, and
             # both carry the same cliSessionId. Whichever is read first would
@@ -549,7 +607,6 @@ def claude_titles():
                 held = out.get(key)
                 if held is None or when >= held[2]:
                     out[key] = entry
-    return out
 
 
 def first_human_line(path, limit=6000):
@@ -628,6 +685,11 @@ def claude_sessions():
         titled = titles.get(session_id)
         chat = titled[0] if titled else ""
         filed = titled[3] if titled else ""
+        # Which copy of the desktop app filed this conversation. Every copy
+        # answers claude://, so without this the link lands wherever the OS
+        # feels like sending it, and a session started in the original opens
+        # in a clone that has never seen it.
+        app = titled[4] if titled else ""
         tail = tail_json_lines(path, count=200)
         state = state_from_tail(tail, "claude")
         if not chat:
@@ -652,7 +714,7 @@ def claude_sessions():
             cwd = folder.replace("-", "/", 1).replace("-", "/")
         yield (session_id, "claude", cwd, title, chat,
                settle(state, mtime, time.time()),
-               last_spoken(tail) or mtime, "", filed, "")
+               last_spoken(tail) or mtime, app, filed, "")
 
 
 def codex_query(path, sql):

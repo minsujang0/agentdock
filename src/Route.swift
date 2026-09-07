@@ -90,7 +90,22 @@ enum Route {
     }
 
     /// Bring the app forward, without touching any particular window.
+    ///
+    /// The copy that filed the session comes first. Falling back to the stock
+    /// bundle id raised the original app for a conversation that only exists
+    /// inside a clone, which is a window that will never show it.
     static func activateApp(for session: Session) {
+        if let bundle = ownerApp(for: session) {
+            if let running = NSRunningApplication.runningApplications(
+                withBundleIdentifier: bundleID(at: bundle) ?? "").first {
+                running.activate(options: [.activateAllWindows])
+                return
+            }
+            NSWorkspace.shared.openApplication(
+                at: bundle, configuration: NSWorkspace.OpenConfiguration())
+            return
+        }
+
         let id = bundleID(for: session)
         if let running = NSRunningApplication
             .runningApplications(withBundleIdentifier: id).first {
@@ -102,6 +117,12 @@ enum Route {
         }
         NSWorkspace.shared.openApplication(at: url,
                                            configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    /// The bundle id inside an app on disk. A clone's is generated per copy,
+    /// so it cannot be guessed from the tool the session belongs to.
+    static func bundleID(at bundle: URL) -> String? {
+        Bundle(url: bundle)?.bundleIdentifier
     }
 
     /// Raise the window whose title mentions this session's project. Desktop
