@@ -26,7 +26,7 @@ enum Route {
         // Their windows expose nothing through accessibility — the tree stops
         // at the app name — so this is the only way in.
         guard let url = deepLink(for: session) else {
-            log("앱만 실행: \(session.headline)")
+            log("앱만 실행: \(session.project)")
             activateApp(for: session)
             return
         }
@@ -147,7 +147,9 @@ enum Route {
                        lastPathComponent(session.cwd)]
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.count >= 3 }
-        log("창 \(windows.count)개 탐색, 단서: \(needles.joined(separator: " / "))")
+        // The needles are the conversation's own title. Matching on it is the
+        // point, writing it to a file on the way past is not.
+        log("창 \(windows.count)개 탐색, 단서 \(needles.count)개")
         for window in windows {
             var raw: CFTypeRef?
             guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString,
@@ -155,7 +157,7 @@ enum Route {
                   let title = raw as? String else { continue }
             guard needles.contains(where: { title.localizedCaseInsensitiveContains($0) })
             else {
-                log("  건너뜀: \(title.prefix(50))")
+                log("  건너뜀")
                 continue
             }
             AXUIElementPerformAction(window, kAXRaiseAction as CFString)

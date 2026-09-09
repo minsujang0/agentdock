@@ -21,6 +21,22 @@ import time
 
 STATE_DIR = os.path.expanduser("~/.local/state/chat-sessions")
 
+def own_only(path, mode):
+    """Narrow a path to its owner.
+
+    These records carry the opening lines of a conversation and the directory
+    it runs in. The default 755/644 hands all of that to every other account
+    on the machine, which is not what anyone means by a local session list.
+    Best effort: a state directory on a volume with no POSIX modes is still
+    worth writing to.
+    """
+    try:
+        if os.path.exists(path) and (os.stat(path).st_mode & 0o777) != mode:
+            os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 # Which hook means what. Anything unlisted just refreshes the timestamp.
 STATES = {
     # A session that has just started is sitting at an empty prompt, not
@@ -122,6 +138,7 @@ def main():
         return 0
 
     os.makedirs(STATE_DIR, exist_ok=True)
+    own_only(STATE_DIR, 0o700)
     path = os.path.join(STATE_DIR, "%s-%s.json" % (tool, session_id))
 
     if state == "done":
@@ -183,6 +200,7 @@ def main():
     with open(tmp, "w") as fh:
         json.dump(record, fh, ensure_ascii=False)
     os.replace(tmp, path)
+    own_only(path, 0o600)
     return 0
 
 

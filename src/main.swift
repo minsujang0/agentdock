@@ -48,9 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The home scan: catches sessions the hooks never saw.
     private func scan() {
-        let script = Bundle.main.resourceURL?.appending(path: "scan.py")
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appending(path: "PycharmProjects/chat-sessions/hooks/scan.py")
+        // Only ever from inside the bundle. The fallback used to name one
+        // machine's checkout, which is no use to anyone else and no use here
+        // either once the app is installed somewhere else.
+        guard let script = Bundle.main.resourceURL?.appending(path: "scan.py"),
+              FileManager.default.fileExists(atPath: script.path) else {
+            log("scan.py 를 번들에서 찾지 못했습니다")
+            return
+        }
         let task = Process()
         task.executableURL = URL(filePath: "/usr/bin/python3")
         task.arguments = [script.path]
@@ -227,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        add(menu, "업데이트 확인…  (\(Update.current))", #selector(checkUpdate), "")
         add(menu, "종료", #selector(quit), "q")
     }
 
@@ -291,6 +297,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(URL(string:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    @objc private func checkUpdate() {
+        Task { @MainActor in
+            do {
+                let release = try await Update.latest()
+                guard release.isNewer else {
+                    Self.tell("최신입니다", "설치된 버전은 \(Update.current) 입니다.")
+                    return
+                }
+                let notes = release.notes.isEmpty
+                    ? "" : "\n\n" + String(release.notes.prefix(500))
+                let answer = Self.ask(
+                    "새 버전 \(release.version)",
+                    "지금은 \(Update.current) 입니다." + notes
+                        + "\n\n받으면 다시 빌드하고 앱을 새로 띄웁니다.",
+                    accept: "받기", other: release.page == nil ? nil : "릴리스 보기")
+                switch answer {
+                case .accept: self.install(release)
+                case .other: if let page = release.page { NSWorkspace.shared.open(page) }
+                case .cancel: break
+                }
+            } catch {
+                Self.tell("업데이트를 확인하지 못했습니다",
+                          error.localizedDescription)
+            }
+        }
+    }
+
+    /// Hand the work to a script and get out of its way: a running bundle
+    /// cannot be replaced underneath itself without breaking the process.
+    private func install(_ release: Update.Release) {
+        guard let script = Bundle.main.resourceURL?.appending(path: "update.sh"),
+              FileManager.default.fileExists(atPath: script.path) else {
+            Self.tell("업데이트 스크립트를 찾지 못했습니다",
+                      "체크아웃에서 빌드한 앱에서만 자동 업데이트가 됩니다.")
+            return
+        }
+        let task = Process()
+        task.executableURL = URL(filePath: "/bin/bash")
+        task.arguments = [script.path, Bundle.main.bundlePath, release.tag]
+        do {
+            try task.run()
+        } catch {
+            Self.tell("업데이트를 시작하지 못했습니다", error.localizedDescription)
+            return
+        }
+        log("업데이트 시작: \(release.tag)")
+        NSApp.terminate(nil)
+    }
+
+    private enum Answer { case accept, other, cancel }
+
+    private static func ask(_ title: String, _ body: String,
+                            accept: String, other: String?) -> Answer {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: accept)
+        if let other { alert.addButton(withTitle: other) }
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .accept
+        case .alertSecondButtonReturn: return other == nil ? .cancel : .other
+        default: return .cancel
+        }
+    }
+
+    private static func tell(_ title: String, _ body: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: "확인")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func quit() { NSApp.terminate(nil) }

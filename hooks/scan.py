@@ -21,6 +21,22 @@ import subprocess
 import time
 
 STATE_DIR = os.path.expanduser("~/.local/state/chat-sessions")
+
+def own_only(path, mode):
+    """Narrow a path to its owner.
+
+    These records carry the opening lines of a conversation and the directory
+    it runs in. The default 755/644 hands all of that to every other account
+    on the machine, which is not what anyone means by a local session list.
+    Best effort: a state directory on a volume with no POSIX modes is still
+    worth writing to.
+    """
+    try:
+        if os.path.exists(path) and (os.stat(path).st_mode & 0o777) != mode:
+            os.chmod(path, mode)
+    except OSError:
+        pass
+
 CLAUDE_ROOT = os.path.expanduser("~/.claude/projects")
 # The desktop app keeps a record per session with the summarised title it shows
 # in its sidebar — the real title, not the first thing that was typed. The
@@ -791,6 +807,7 @@ def codex_sessions():
 
 def main():
     os.makedirs(STATE_DIR, exist_ok=True)
+    own_only(STATE_DIR, 0o700)
     now = time.time()
     written = 0
     seen = set()
@@ -862,6 +879,7 @@ def main():
                         with open(tmp, "w") as fh:
                             json.dump(existing, fh, ensure_ascii=False)
                         os.replace(tmp, path)
+                        own_only(path, 0o600)
                     continue
             except (IOError, OSError, ValueError):
                 pass
@@ -903,6 +921,7 @@ def main():
         with open(tmp, "w") as fh:
             json.dump(record, fh, ensure_ascii=False)
         os.replace(tmp, path)
+        own_only(path, 0o600)
         written += 1
 
     # Drop anything that has gone quiet for good.
