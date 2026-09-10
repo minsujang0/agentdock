@@ -21,6 +21,13 @@ Animation 이 맡아서 유휴 상태 CPU 는 0% 대다.
 ## 설치
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/minsujang0/agentdock/main/install.sh | bash
+```
+
+받아서 이 기계에서 빌드하고 `~/Applications` 에 놓은 뒤 띄운다. 같은 명령이
+업데이트도 한다. 직접 하려면 이렇게 한다.
+
+```bash
 git clone https://github.com/minsujang0/agentdock.git
 cd agentdock
 ./build.sh
@@ -64,7 +71,12 @@ Codex 는 `~/.codex/config.toml` 의 `notify` 에 `hooks/codex-notify.sh` 를 �
 
 앱 번들을 릴리스 자산으로 배포하지 않는 이유는 서명과 공증 때문이다. 공증 없이
 받은 `.app` 은 Gatekeeper 가 막고, 격리 속성을 지우라고 안내하는 것은 소스에서
-빌드하라는 것보다 나쁜 조언이다. 그래서 네트워크에서 가져오는 것은 버전 문자열
+빌드하라는 것보다 나쁜 조언이다. Homebrew 도 2026년 9월부터 서명·공증 없는
+cask 를 받지 않는다.
+
+소스에서 빌드하는 쪽은 우회가 아니다. `git` 과 `curl` 은 격리 속성을 붙이지
+않지만, 그건 실행 파일이 네트워크를 건너온 적이 없기 때문이다. 검사를 건너뛴
+것이 아니라 검사할 대상이 애초에 없다. 그래서 네트워크에서 가져오는 것은 버전 문자열
 하나이고, 코드는 원래 있던 remote 에서 그 태그를 체크아웃해 온다. 태그는 git
 인자가 되기 전에 형식을 검사하고, 커밋하지 않은 변경이 체크아웃에 있으면
 덮어쓰지 않고 멈춘다.
