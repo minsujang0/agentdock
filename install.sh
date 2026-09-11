@@ -1,6 +1,6 @@
 #!/bin/bash
 # 한 줄 설치:
-#   curl -fsSL https://raw.githubusercontent.com/minsujang0/agentdock/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/minsujang0/sessiondock/main/install.sh | bash
 #
 # 소스를 받아 이 기계에서 빌드한다. 미리 빌드한 번들을 내려받지 않는 이유는
 # 공증 때문만이 아니다. git 과 curl 은 격리 속성을 붙이지 않으므로 받은 앱이
@@ -9,7 +9,7 @@
 # 컴파일도 여기서 한다.
 set -euo pipefail
 
-REPO="${SESSIONDOCK_REPO:-https://github.com/minsujang0/agentdock.git}"
+REPO="${SESSIONDOCK_REPO:-https://github.com/minsujang0/sessiondock.git}"
 SRC="${SESSIONDOCK_SRC:-$HOME/.local/share/sessiondock/src}"
 DEST="${SESSIONDOCK_DEST:-$HOME/Applications}"
 APP="$DEST/SessionDock.app"

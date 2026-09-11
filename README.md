@@ -21,15 +21,15 @@ Animation 이 맡아서 유휴 상태 CPU 는 0% 대다.
 ## 설치
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/minsujang0/agentdock/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/minsujang0/sessiondock/main/install.sh | bash
 ```
 
 받아서 이 기계에서 빌드하고 `~/Applications` 에 놓은 뒤 띄운다. 같은 명령이
 업데이트도 한다. 직접 하려면 이렇게 한다.
 
 ```bash
-git clone https://github.com/minsujang0/agentdock.git
-cd agentdock
+git clone https://github.com/minsujang0/sessiondock.git
+cd sessiondock
 ./build.sh
 cp -R build/SessionDock.app ~/Applications/
 open ~/Applications/SessionDock.app
@@ -48,7 +48,7 @@ Claude Code 는 `~/.claude/settings.json` 에 이벤트마다 한 줄씩 넣는�
 {
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command",
-      "command": "/usr/bin/python3 /경로/agentdock/hooks/record.py SessionStart"}]}]
+      "command": "/usr/bin/python3 /경로/sessiondock/hooks/record.py SessionStart"}]}]
   }
 }
 ```

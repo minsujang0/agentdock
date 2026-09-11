@@ -13,7 +13,7 @@
 import Foundation
 
 enum Update {
-    static let repo = "minsujang0/agentdock"
+    static let repo = "minsujang0/sessiondock"
     /// What this build calls itself. Read from the bundle so there is one
     /// place to change it: build.sh writes it into the Info.plist.
     static var current: String {
